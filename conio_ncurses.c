@@ -330,11 +330,141 @@ void conio_gettime(struct time *t)
     t->ti_hund = 0;
 }
 
-void conio_sound(unsigned hz) { (void)hz; }
-void conio_nosound(void) { }
+/* ---- sound ----
+   TINY plays tones: sound(hz), then delay(ms), then nosound(), in real time (the PC speaker, a square wave). Here sound() and nosound() only
+   remember the frequency, and delay(ms) writes ms milliseconds of that square wave to the sound server (PulseAudio on the N900) and so
+   waits: the sound card clock sets the pace and the picture stays in step with the voice.
+   libpulse-simple is loaded when it is first needed (dlopen), so the program neither needs its headers nor fails without it:
+   when it cannot be opened, or TINY_SILENT is set in the environment, delay() just waits. */
+
+#include <dlfcn.h>
+
+#define AUDIO_RATE 16000
+#define AUDIO_AMP  5000          /* of 32767: the speaker of a phone is loud enough */
+
+typedef struct { int format; unsigned rate; unsigned char channels; } pa_spec_t;           /* pa_sample_spec */
+typedef struct { unsigned maxlength, tlength, prebuf, minreq, fragsize; } pa_attr_t;       /* pa_buffer_attr */
+
+static void *(*pa_new)(const char *, const char *, int, const char *, const char *, const pa_spec_t *, const void *, const pa_attr_t *, int *);
+static int (*pa_write)(void *, const void *, size_t, int *);
+static int (*pa_drain)(void *, int *);
+static void (*pa_free)(void *);
+static void *audio, *audio_lib;
+static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
+static unsigned sound_hz;
+static double sound_phase;
+
+/* TINY_AUDIO_LOG=/path writes what happens to the sound (for testing; the screen has no room for messages) */
+static void audio_log(const char *fmt, ...)
+{
+    const char *name = getenv("TINY_AUDIO_LOG");
+    FILE *fp;
+    va_list ap;
+    if (!name) return;
+    fp = fopen(name, "a");
+    if (!fp) return;
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+    fputc('\n', fp);
+    fclose(fp);
+}
+
+static void audio_close(void)
+{
+    int err;
+    if (audio_state == 1 && audio) {
+        pa_drain(audio, &err);
+        pa_free(audio);
+    }
+    audio = NULL;
+    audio_state = -1;
+}
+
+static void audio_open(void)
+{
+    static const pa_spec_t spec = { 3 /* PA_SAMPLE_S16LE */, AUDIO_RATE, 1 };
+    pa_attr_t attr;
+    int err;
+    audio_state = -1;
+    if (getenv("TINY_SILENT")) {
+        audio_log("TINY_SILENT is set");
+        return;
+    }
+    audio_lib = dlopen("libpulse-simple.so.0", RTLD_NOW);
+    if (!audio_lib) {
+        audio_log("dlopen: %s", dlerror());
+        return;
+    }
+    pa_new = (void *(*)(const char *, const char *, int, const char *, const char *, const pa_spec_t *, const void *, const pa_attr_t *, int *))dlsym(audio_lib, "pa_simple_new");
+    pa_write = (int (*)(void *, const void *, size_t, int *))dlsym(audio_lib, "pa_simple_write");
+    pa_drain = (int (*)(void *, int *))dlsym(audio_lib, "pa_simple_drain");
+    pa_free = (void (*)(void *))dlsym(audio_lib, "pa_simple_free");
+    if (!pa_new || !pa_write || !pa_drain || !pa_free) {
+        audio_log("dlsym: %s", dlerror());
+        return;
+    }
+    attr.maxlength = (unsigned)-1;
+    attr.tlength = AUDIO_RATE * 2 / 12;          /* about 80 ms of sound in the buffer */
+    attr.prebuf = 0;                             /* start playing at once */
+    attr.minreq = (unsigned)-1;
+    attr.fragsize = (unsigned)-1;
+    audio = pa_new(NULL, "TINY", 1 /* PA_STREAM_PLAYBACK */, NULL, "robot voice", &spec, NULL, &attr, &err);
+    if (!audio) {
+        audio_log("pa_simple_new failed, error %d", err);
+        return;
+    }
+    audio_log("sound opened, %d Hz", AUDIO_RATE);
+    audio_state = 1;
+    atexit(audio_close);
+}
+
+/* `ms` milliseconds of the current tone (or silence) to the sound server; blocks for about that long */
+static void audio_play(unsigned ms)
+{
+    short buf[AUDIO_RATE / 10];
+    unsigned n = ms * AUDIO_RATE / 1000, i, k;
+    int err;
+    double step = sound_hz ? (double)sound_hz / AUDIO_RATE : 0.0;
+    while (n > 0) {
+        k = n > sizeof buf / sizeof buf[0] ? (unsigned)(sizeof buf / sizeof buf[0]) : n;
+        for (i = 0; i < k; i++) {
+            if (step > 0.0) {
+                sound_phase += step;
+                if (sound_phase >= 1.0) sound_phase -= 1.0;
+                buf[i] = sound_phase < 0.5 ? AUDIO_AMP : -AUDIO_AMP;
+            } else
+                buf[i] = 0;
+        }
+        if (pa_write(audio, buf, k * sizeof buf[0], &err) < 0) {
+            audio_log("pa_simple_write failed, error %d", err);
+            audio_close();
+            return;
+        }
+        n -= k;
+    }
+}
+
+void conio_sound(unsigned hz)
+{
+    sound_hz = hz;
+    if (hz && audio_state == 0)
+        audio_open();
+}
+
+void conio_nosound(void)
+{
+    sound_hz = 0;
+}
 
 void conio_delay(unsigned ms)
 {
+    if (audio_state == 1) {
+        if (ms >= 5)
+            con_flush();
+        audio_play(ms);
+        return;
+    }
     if (ms < 5) { usleep(ms * 1000u); return; }
     con_flush();
     napms((int)ms);
