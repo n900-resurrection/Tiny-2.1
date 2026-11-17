@@ -341,6 +341,7 @@ void conio_gettime(struct time *t)
 #include <sys/time.h>
 
 #define AUDIO_RATE 16000
+#define AUDIO_LEAD_MS 60
 #define AUDIO_AMP  5000          /* of 32767: the speaker of a phone is loud enough */
 
 typedef struct { int format; unsigned rate; unsigned char channels; } pa_spec_t;           /* pa_sample_spec */
@@ -353,7 +354,7 @@ static void (*pa_free)(void *);
 static void *audio, *audio_lib;
 static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
 static unsigned sound_hz;
-static double lead_end;                  /* when the sound already written will have been played (ms, wall clock) */
+static double lead_end, t_open;                  /* when the sound already written will have been played (ms, wall clock) */
 static unsigned long st_tone_ms, st_quiet_ms, st_calls, st_low;
 static double sound_phase;
 
@@ -375,6 +376,13 @@ static void audio_log(const char *fmt, ...)
 
 static void audio_flush(void);
 
+static double now_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
 static void audio_close(void)
 {
     int err;
@@ -382,7 +390,7 @@ static void audio_close(void)
     if (closing) return;
     closing = 1;
     audio_flush();
-    audio_log("played: %lu ms of tone, %lu ms of silence, %lu writes (%lu of them shorter than 5 ms)", st_tone_ms, st_quiet_ms, st_calls, st_low);
+    audio_log("played: %lu ms of tone, %lu ms of silence, %lu writes (%lu of them shorter than 5 ms), %.0f ms since the start", st_tone_ms, st_quiet_ms, st_calls, st_low, now_ms() - t_open);
     if (audio_state == 1 && audio) {
         pa_drain(audio, &err);
         pa_free(audio);
@@ -427,6 +435,7 @@ static void audio_open(void)
     }
     audio_log("sound opened, %d Hz", AUDIO_RATE);
     audio_state = 1;
+    t_open = now_ms();
     atexit(audio_close);
 }
 
@@ -438,12 +447,6 @@ static short abuf[AUDIO_CHUNK + AUDIO_RATE / 10];
 static unsigned an;
 static float lp;                         /* the low-pass filter that takes the edge off the square wave */
 
-static double now_ms(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
-}
 
 static void audio_flush(void)
 {
@@ -465,6 +468,11 @@ static void audio_flush(void)
     }
     lead_end += an * 1000.0 / AUDIO_RATE;
     an = 0;
+    /* keep the program at most AUDIO_LEAD_MS ahead of the sound, whatever the sound server does with the data (it may take a lot
+       before it blocks a writer): the delays of TINY, and so the highlight of the spoken words, must take their real time */
+    t = lead_end - now_ms() - AUDIO_LEAD_MS;
+    if (t > 1.0)
+        usleep((useconds_t)(t * 1000.0));
 }
 
 /* `ms` milliseconds of the current tone (or silence) into the buffer; the buffer goes out when it is full, and that waits for the sound card */
@@ -482,7 +490,7 @@ static void audio_play(unsigned ms)
             if (sound_phase >= 1.0) sound_phase -= 1.0;
             x = sound_phase < 0.5 ? (float)AUDIO_AMP : -(float)AUDIO_AMP;
         }
-        lp += 0.45f * (x - lp);
+        lp += 0.85f * (x - lp);      /* a mild low-pass: 0.45 cut the voice (formants above 1 kHz, hiss, clicks) almost out */
         abuf[an++] = (short)lp;
         if (an >= AUDIO_CHUNK)
             audio_flush();
@@ -493,6 +501,7 @@ static void audio_play(unsigned ms)
 
 void conio_sound(unsigned hz)
 {
+    if (hz && getenv("TINY_AUDIO_TRACE") && audio_state == 1) audio_log("snd %u @%.0f", hz, now_ms() - t_open);
     sound_hz = hz;
     if (hz && audio_state == 0)
         audio_open();

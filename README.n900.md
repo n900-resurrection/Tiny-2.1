@@ -11,4 +11,12 @@ This branch builds TINY 2.1 on a POSIX system, in particular for the Nokia N900 
   The terminal needs at least 60 x 14 characters; with a smaller one `tiny` says so, and `tiny /P` is the plain text mode.
 - The terminal should have 256 colours (`TERM=xterm-256color`) for the neon palette; with fewer, the nearest standard colours are used.
 
+## On the N900
+
+Screenshots from a Nokia N900 (800 x 480, the terminal in full screen, 72 x 18 characters):
+
+![The boot screen](screenshots/n900-boot.png)
+![A conversation](screenshots/n900-chat-1.png)
+![Another conversation](screenshots/n900-chat-2.png)
+
 Build: `make` (see the top of the `Makefile`). Packages for the N900: <https://n900-resurrection.github.io>.
