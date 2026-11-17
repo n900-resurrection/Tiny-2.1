@@ -17,6 +17,11 @@
 #include <math.h>
 #include <time.h>
 
+/* The full-screen interface: Turbo C conio in DOS, or conio_ncurses.h (compile with -DCONIO_NCURSES) on a POSIX system. */
+#if defined(__TURBOC__) || defined(CONIO_NCURSES)
+#define HAVE_UI 1
+#endif
+
 #define VOCAB  97      /* 0 pad, 1 newline, 2.. the letters ' '..'~' */
 #define CTX    128     /* longest question + answer, in letters      */
 #define MAXD   128
@@ -423,14 +428,20 @@ static int plain_main(void)
     return 0;
 }
 
-#ifdef __TURBOC__
+#ifdef HAVE_UI
 /* ==================================================================
    The DOS screen: Turbo C conio for text, the PC speaker for sound,
    and on VGA a reprogrammed neon colour palette.
+   (On a POSIX system conio_ncurses.h plays the part of conio; there
+   is no sound then, and the palette is set with ncurses.)
    ================================================================== */
+#ifdef __TURBOC__
 #include <conio.h>
 #include <dos.h>
 #include <io.h>
+#else
+#include "conio_ncurses.h"
+#endif
 
 #define SCRW   80
 #define CHAT_L 3                /* chat window, inside its frame */
@@ -462,6 +473,18 @@ static int plain_main(void)
 #define C_HOT     12
 #define C_ON      10
 
+#ifdef __TURBOC__
+#define KEY_NAME1 "F1"
+#define KEY_NAME2 "F2"
+#define KEY_NAME3 "F3"
+#define KEY_NAME4 "F4"
+#else
+#define KEY_NAME1 "^A"
+#define KEY_NAME2 "^S"
+#define KEY_NAME3 "^V"
+#define KEY_NAME4 "^T"
+#endif
+
 static int mono, vga, neon = 1, sound_on = 1, voice_on = 1, demo, dump, dumpall;
 static int chat_x = 1, chat_y = 1;              /* cursor inside chat window */
 static unsigned cursor_shape = 0x0607;
@@ -481,6 +504,7 @@ static void color(int a)
     textattr(a);
 }
 
+#ifdef __TURBOC__
 static void cursor(int on)
 {
     union REGS r;
@@ -534,6 +558,31 @@ static void neon_palette(void)
     r.h.bl = 0;
     int86(0x10, &r, &r);
 }
+#else
+static void cursor(int on)
+{
+    con_cursor(on);
+}
+
+/* "VGA" here means: the terminal can change its colours (xterm with 256 colours can) */
+static int has_vga(void)
+{
+    return con_can_palette();
+}
+
+static void neon_palette(void)
+{
+    static const unsigned char rgb[16][3] = {
+        { 1, 1, 7 },    { 5, 7, 22 },   { 0, 26, 18 },  { 0, 20, 30 },
+        { 40, 4, 12 },  { 28, 6, 40 },  { 42, 26, 4 },  { 40, 45, 54 },
+        { 13, 16, 28 }, { 18, 34, 63 }, { 18, 63, 42 }, { 10, 57, 63 },
+        { 63, 22, 34 }, { 63, 18, 58 }, { 63, 54, 14 }, { 60, 62, 63 }
+    };
+    int i;
+    for (i = 0; i < 16; i++)
+        con_set_palette(i, rgb[i][0], rgb[i][1], rgb[i][2]);
+}
+#endif
 
 /* ---- sound ---- */
 
@@ -694,12 +743,12 @@ static void status_bar(const char *right)
     color(C_BAR);
     gotoxy(1, 25);
     cputs(" ");
-    color(C_BARKEY); cputs("F1"); color(C_BAR); cputs(" Help  ");
-    color(C_BARKEY); cputs("F2"); color(C_BAR); cputs(" Sound ");
+    color(C_BARKEY); cputs(KEY_NAME1); color(C_BAR); cputs(" Help  ");
+    color(C_BARKEY); cputs(KEY_NAME2); color(C_BAR); cputs(" Sound ");
     color(C_BARON); cputs(sound_on ? "ON " : "OFF"); color(C_BAR); cputs("  ");
-    color(C_BARKEY); cputs("F3"); color(C_BAR); cputs(" Voice ");
+    color(C_BARKEY); cputs(KEY_NAME3); color(C_BAR); cputs(" Voice ");
     color(C_BARON); cputs(voice_on ? "ON " : "OFF"); color(C_BAR); cputs("  ");
-    color(C_BARKEY); cputs("F4"); color(C_BAR); cputs(" Creativity ");
+    color(C_BARKEY); cputs(KEY_NAME4); color(C_BAR); cputs(" Creativity ");
     color(C_BARON); putch('0' + creativity); color(C_BAR); cputs("  ");
     color(C_BARKEY); cputs("Esc"); color(C_BAR); cputs(" Quit ");
     if (right) strncpy(status_right, right, 15);
@@ -791,7 +840,7 @@ static void frame(void)
     put_at(59, 22, C_FRAME2, "\xD1");
     put_at(59, 24, C_FRAME2, "\xCF");
     put_at(59, IN_Y, C_FRAME2, "\xB3");
-    put_at(62, IN_Y, C_DIM, "\x18 last  F1 help");
+    put_at(62, IN_Y, C_DIM, "\x18 last  " KEY_NAME1 " help");
     monitor_static();
     monitor_live();
     status_bar(NULL);
@@ -1033,7 +1082,7 @@ static void show_help(void)
         "     what is 7 times 8 \xFA spell elephant",
         "     which countries border estonia",
         "     how do you say thank you in spanish",
-        "F2 sound \xFA F3 robot voice \xFA F4 creativity",
+        KEY_NAME2 " sound \xFA " KEY_NAME3 " robot voice \xFA " KEY_NAME4 " creativity",
         "\x18 last question \xFA Esc quit \xFA CLS clears",
         NULL
     };
@@ -1291,6 +1340,9 @@ static void restore_screen(void)
     textattr(7);
     clrscr();
     cursor(1);
+#ifndef __TURBOC__
+    con_end();                                  /* back to the shell: the screen, the colours */
+#endif
 }
 
 static int ui_main(void)
@@ -1361,7 +1413,7 @@ static int ui_main(void)
     printf("TINY: goodbye!\n");
     return 0;
 }
-#endif
+#endif /* HAVE_UI */
 
 int main(int argc, char **argv)
 {
@@ -1372,7 +1424,7 @@ int main(int argc, char **argv)
             creativity = argv[i][0] - '0';
         else if (is_word(argv[i], "/p") || is_word(argv[i], "-p"))
             plain = 1;
-#ifdef __TURBOC__
+#ifdef HAVE_UI
         else if (is_word(argv[i], "/demo") || is_word(argv[i], "-demo"))
             demo = 1;
         else if (is_word(argv[i], "/dump"))
@@ -1388,7 +1440,7 @@ int main(int argc, char **argv)
 #endif
     }
     srand((unsigned)time(NULL));
-#ifdef __TURBOC__
+#ifdef HAVE_UI
     if (!plain && isatty(0) && isatty(1))
         return ui_main();
 #endif
