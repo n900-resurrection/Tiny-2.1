@@ -332,29 +332,25 @@ void conio_gettime(struct time *t)
 
 /* ---- sound ----
    TINY plays tones: sound(hz), then delay(ms), then nosound(), in real time (the PC speaker, a square wave). Here sound() and nosound() only
-   remember the frequency, and delay(ms) writes ms milliseconds of that square wave to the sound server (PulseAudio on the N900) and so
-   waits: the sound card clock sets the pace and the picture stays in step with the voice.
-   libpulse-simple is loaded when it is first needed (dlopen), so the program neither needs its headers nor fails without it:
-   when it cannot be opened, or TINY_SILENT is set in the environment, delay() just waits. */
+   remember the frequency, and delay(ms) puts ms milliseconds of that square wave into a pipe to `paplay` (the PulseAudio player of the N900) and waits
+   as long as it lasts, so the picture stays in step with the voice.
 
-#include <dlfcn.h>
+   Why paplay and not the library: the sound policy of the N900 puts every program it does not know into the group "othermedia" and limits
+   the volume of its streams to about 30 % (-30 dB), however loud the phone is set. A stream that asks for its volume itself when it connects
+   (paplay does, 100 %) keeps it; a stream made with the simple API of libpulse does not, and it was inaudible but for the clicks.
+   When paplay is missing, or TINY_SILENT is set in the environment, delay() just waits. */
+
+#include <signal.h>
 #include <sys/time.h>
 
 #define AUDIO_RATE 16000
 #define AUDIO_LEAD_MS 60
-#define AUDIO_AMP  5000          /* of 32767: the speaker of a phone is loud enough */
+#define AUDIO_AMP  8000          /* of 32767 (the stream plays at 100 %, so this is already loud on the phone); TINY_VOLUME=1..100 in the environment scales it */
 
-typedef struct { int format; unsigned rate; unsigned char channels; } pa_spec_t;           /* pa_sample_spec */
-typedef struct { unsigned maxlength, tlength, prebuf, minreq, fragsize; } pa_attr_t;       /* pa_buffer_attr */
-
-static void *(*pa_new)(const char *, const char *, int, const char *, const char *, const pa_spec_t *, const void *, const pa_attr_t *, int *);
-static int (*pa_write)(void *, const void *, size_t, int *);
-static int (*pa_drain)(void *, int *);
-static void (*pa_free)(void *);
-static void *audio, *audio_lib;
+static FILE *audio;                      /* the pipe to paplay */
 static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
 static unsigned sound_hz;
-static double lead_end, t_open;                  /* when the sound already written will have been played (ms, wall clock) */
+static double lead_end, t_open;          /* when the sound already written will have been played; when the stream was opened (ms, wall clock) */
 static unsigned long st_tone_ms, st_quiet_ms, st_calls, st_low;
 static double sound_phase;
 
@@ -385,75 +381,65 @@ static double now_ms(void)
 
 static void audio_close(void)
 {
-    int err;
     static int closing;
     if (closing) return;
     closing = 1;
     audio_flush();
     audio_log("played: %lu ms of tone, %lu ms of silence, %lu writes (%lu of them shorter than 5 ms), %.0f ms since the start", st_tone_ms, st_quiet_ms, st_calls, st_low, now_ms() - t_open);
-    if (audio_state == 1 && audio) {
-        pa_drain(audio, &err);
-        pa_free(audio);
-    }
+    if (audio_state == 1 && audio)
+        pclose(audio);                           /* waits until paplay has played the rest */
     audio = NULL;
     audio_state = -1;
 }
 
 static void audio_open(void)
 {
-    static const pa_spec_t spec = { 3 /* PA_SAMPLE_S16LE */, AUDIO_RATE, 1 };
-    pa_attr_t attr;
-    int err;
+    /* a WAV header for a stream of unknown length: paplay reads the sound from its standard input */
+    static const unsigned char wav[44] = {
+        'R', 'I', 'F', 'F', 0xFF, 0xFF, 0xFF, 0x7F, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0,
+        1, 0, 1, 0, (AUDIO_RATE & 255), (AUDIO_RATE >> 8), 0, 0, ((AUDIO_RATE * 2) & 255), ((AUDIO_RATE * 2) >> 8), 0, 0, 2, 0, 16, 0,
+        'd', 'a', 't', 'a', 0xFF, 0xFF, 0xFF, 0x7F
+    };
     audio_state = -1;
     if (getenv("TINY_SILENT")) {
         audio_log("TINY_SILENT is set");
         return;
     }
-    /* libpulse puts the X display into the properties of the stream (window.x11.display), and on the N900 the sound policy then treats it as the stream of a
-       window; a terminal program has none, and its stream went quiet after a few clicks. TINY does not use X, so it does not need DISPLAY. */
+    if (access("/usr/bin/paplay", X_OK) != 0) {
+        audio_log("no /usr/bin/paplay");
+        return;
+    }
+    /* the X display would go into the properties of the stream and the policy would take it for the stream of a window */
     unsetenv("DISPLAY");
-    audio_lib = dlopen("libpulse-simple.so.0", RTLD_NOW);
-    if (!audio_lib) {
-        audio_log("dlopen: %s", dlerror());
-        return;
-    }
-    pa_new = (void *(*)(const char *, const char *, int, const char *, const char *, const pa_spec_t *, const void *, const pa_attr_t *, int *))dlsym(audio_lib, "pa_simple_new");
-    pa_write = (int (*)(void *, const void *, size_t, int *))dlsym(audio_lib, "pa_simple_write");
-    pa_drain = (int (*)(void *, int *))dlsym(audio_lib, "pa_simple_drain");
-    pa_free = (void (*)(void *))dlsym(audio_lib, "pa_simple_free");
-    if (!pa_new || !pa_write || !pa_drain || !pa_free) {
-        audio_log("dlsym: %s", dlerror());
-        return;
-    }
-    attr.maxlength = (unsigned)-1;
-    attr.tlength = AUDIO_RATE * 2 / 12;          /* about 80 ms of sound in the buffer */
-    lead_end = 0;
-    attr.prebuf = 0;                             /* start playing at once */
-    attr.minreq = (unsigned)-1;
-    attr.fragsize = (unsigned)-1;
-    audio = pa_new(NULL, "TINY", 1 /* PA_STREAM_PLAYBACK */, NULL, "robot voice", &spec, NULL, &attr, &err);
+    signal(SIGPIPE, SIG_IGN);
+    audio = popen("exec /usr/bin/paplay --client-name=TINY --stream-name='robot voice' --volume=65536 2>/dev/null", "w");
     if (!audio) {
-        audio_log("pa_simple_new failed, error %d", err);
+        audio_log("popen failed");
         return;
     }
-    audio_log("sound opened, %d Hz", AUDIO_RATE);
+    if (fwrite(wav, 1, sizeof wav, audio) != sizeof wav) {
+        audio_log("cannot write to paplay");
+        pclose(audio);
+        audio = NULL;
+        return;
+    }
     audio_state = 1;
     t_open = now_ms();
+    lead_end = 0;
+    audio_log("sound opened through paplay, %d Hz", AUDIO_RATE);
     atexit(audio_close);
 }
 
 /* The samples wait in a small buffer and go out in pieces of about 30 ms: the voice asks for 2 ms of sound at a time (a vowel is a tone that
-   changes every 2 ms), and a write for each of them left gaps that sounded like clicking teeth. When the sound server has run dry, or has
-   been idle, 50 ms of silence go first, so there is a lead again and the stream does not stop between two pieces. */
+   changes every 2 ms), and a write for each of them would leave gaps. When the player has run dry, or has been idle, 50 ms of silence
+   go first, so there is a lead again and the stream does not stop between two pieces. */
 #define AUDIO_CHUNK (AUDIO_RATE * 30 / 1000)
 static short abuf[AUDIO_CHUNK + AUDIO_RATE / 10];
 static unsigned an;
 static float lp;                         /* the low-pass filter that takes the edge off the square wave */
 
-
 static void audio_flush(void)
 {
-    int err;
     double t;
     short silence[AUDIO_RATE * 50 / 1000];
     if (audio_state != 1 || an == 0)
@@ -461,22 +447,21 @@ static void audio_flush(void)
     t = now_ms();
     if (t > lead_end) {                          /* run dry, or idle: rebuild the lead */
         memset(silence, 0, sizeof silence);
-        if (pa_write(audio, silence, sizeof silence, &err) < 0) { audio_log("pa_simple_write failed, error %d", err); audio_close(); return; }
+        if (fwrite(silence, 1, sizeof silence, audio) != sizeof silence) { audio_log("write to paplay failed"); audio_close(); return; }
         lead_end = t + 50.0;
     }
-    if (getenv("TINY_AUDIO_DUMP")) {               /* for testing: the samples as they go to the sound server (raw s16le, mono, 16 kHz) */
+    if (getenv("TINY_AUDIO_DUMP")) {               /* for testing: the samples as they go to the player (raw s16le, mono, 16 kHz); not in /tmp, it is only 1 MB */
         FILE *df = fopen(getenv("TINY_AUDIO_DUMP"), "ab");
-        if (df) { fwrite(abuf, sizeof abuf[0], an, df); fclose(df); }
+        if (df) { if (fwrite(abuf, sizeof abuf[0], an, df) != an) { /* test output only */ } fclose(df); }
     }
-    if (pa_write(audio, abuf, an * sizeof abuf[0], &err) < 0) {
-        audio_log("pa_simple_write failed, error %d", err);
+    if (fwrite(abuf, sizeof abuf[0], an, audio) != an || fflush(audio) != 0) {
+        audio_log("write to paplay failed");
         audio_close();
         return;
     }
     lead_end += an * 1000.0 / AUDIO_RATE;
     an = 0;
-    /* keep the program at most AUDIO_LEAD_MS ahead of the sound, whatever the sound server does with the data (it may take a lot
-       before it blocks a writer): the delays of TINY, and so the highlight of the spoken words, must take their real time */
+    /* keep the program at most AUDIO_LEAD_MS ahead of the sound: the delays of TINY, and so the highlight of the spoken words, must take their real time */
     t = lead_end - now_ms() - AUDIO_LEAD_MS;
     if (t > 1.0)
         usleep((useconds_t)(t * 1000.0));
@@ -487,6 +472,12 @@ static void audio_play(unsigned ms)
 {
     unsigned n = ms * AUDIO_RATE / 1000, i;
     double step = sound_hz ? (double)sound_hz / AUDIO_RATE : 0.0;
+    static float amp;
+    if (amp == 0.0f) {
+        const char *v = getenv("TINY_VOLUME");
+        int pc = v ? atoi(v) : 100;
+        amp = (float)AUDIO_AMP * (float)(pc < 1 ? 1 : pc > 100 ? 100 : pc) / 100.0f;
+    }
     if (sound_hz) st_tone_ms += ms; else st_quiet_ms += ms;
     st_calls++;
     if (ms < 5) st_low++;
@@ -495,7 +486,7 @@ static void audio_play(unsigned ms)
         if (step > 0.0) {
             sound_phase += step;
             if (sound_phase >= 1.0) sound_phase -= 1.0;
-            x = sound_phase < 0.5 ? (float)AUDIO_AMP : -(float)AUDIO_AMP;
+            x = sound_phase < 0.5 ? amp : -amp;
         }
         lp += 0.85f * (x - lp);      /* a mild low-pass: 0.45 cut the voice (formants above 1 kHz, hiss, clicks) almost out */
         abuf[an++] = (short)lp;

@@ -11,7 +11,7 @@ NCURSES_LIBS ?= -lncursesw
 all: tiny
 
 tiny: TINY.C conio_ncurses.c conio_ncurses.h
-	$(CC) $(CFLAGS) -Wall -DCONIO_NCURSES -x c TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -ldl -o $@
+	$(CC) $(CFLAGS) -Wall -DCONIO_NCURSES -x c TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -o $@
 
 plain: tiny-plain
 
