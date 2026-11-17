@@ -503,6 +503,19 @@ static void audio_play(unsigned ms)
     }
 }
 
+/* While TINY waits for a key the stream would run dry; the sound server (on the N900 its policy for the "x-maemo" streams) then lets a stream go quiet
+   for good, and the voice came out silent after a pause of some seconds. A little silence now and then keeps the stream playing. */
+static void audio_idle(void)
+{
+    unsigned save;
+    if (audio_state != 1 || lead_end - now_ms() >= 40.0)
+        return;
+    save = sound_hz;
+    sound_hz = 0;
+    audio_play(30);
+    sound_hz = save;
+}
+
 void conio_sound(unsigned hz)
 {
     if (hz && getenv("TINY_AUDIO_TRACE") && audio_state == 1) audio_log("snd %u @%.0f", hz, now_ms() - t_open);
@@ -572,6 +585,8 @@ int conio_kbhit(void)
     if (con_qn == 0) {
         con_flush();
         con_poll();
+        if (con_qn == 0)
+            audio_idle();
     }
     return con_qn > 0;
 }
@@ -584,7 +599,11 @@ int conio_getch(void)
     while (con_qn == 0) {
         con_flush();
         con_poll();
-        if (con_qn == 0) napms(15);
+        if (con_qn == 0) {
+            audio_idle();
+            if (audio_state != 1) napms(15);     /* with sound, the silence written above takes the time */
+            else napms(5);
+        }
     }
     c = con_q[0];
     for (i = 1; i < con_qn; i++) con_q[i - 1] = con_q[i];
