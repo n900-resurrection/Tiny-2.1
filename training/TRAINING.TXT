@@ -1,0 +1,24 @@
+TINY 2 training kit
+===================
+facts/*.txt     one-off facts:  question | question | ... => answer | answer
+facts/*.tsv     table facts:    relation <TAB> subject <TAB> answer
+raw/            hand-written word lists that were turned into facts/words2.tsv
+gen2.py         turns the facts into endless question/answer pairs
+                (phrasings, reverse, yes/no, two-part, numbers, letters,
+                "I do not know", typos).  python3 gen2.py shows samples.
+train2.py       PyTorch training, evaluation and export to TINY.BIN
+geo2.py, extra_facts.py   rebuild geography/element tables from the public
+                mledoze/countries and Periodic-Table-JSON datasets (GitHub)
+tiny2.pt        the trained network (same as TINY.BIN, full precision)
+
+Continue training and export (needs Python 3 and PyTorch, CPU is fine):
+  python3 train2.py train 60 more.pt --resume tiny2.pt --lr 5e-4 --decay 0.3 --eval-every 20
+  python3 train2.py eval more.pt
+  python3 train2.py export more.pt TINY.BIN
+The same TINY.EXE reads the new TINY.BIN.
+
+How TINY 2 was trained: started from the version 1 network (grown from 3 to
+4 layers, middle layer 192 -> 256), 20 minutes on the first new data set,
+15 minutes more, then 150 minutes and another 180 minutes on the full data
+set (about 15 million examples in all), on 2 CPU cores.
+Score on 780 unseen test questions: 61% (version 1: 6%).

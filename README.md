@@ -17,10 +17,35 @@ Written by Fable 5.2 and trained by Opus 5.5.
 
 ## Run
 
+Copy the files from the `dos` folder to the DOS machine, then:
+
 ```
 C:\> CD \TINY
 C:\TINY> TINY
 ```
 
-Keep `TINY.EXE` and `TINY.BIN` in the same folder. To rebuild:
-`TCC -ml TINY.C`
+Keep `TINY.EXE` and `TINY.BIN` in the same folder. `dos/README.TXT` has the
+keys, options and details. To rebuild: `TCC -ml TINY.C`
+
+## Train it yourself
+
+The `training` folder is the complete training kit: the facts, the
+generator that turns them into question/answer pairs in many wordings
+(`gen2.py`), and the PyTorch training script (`train2.py`). Needs Python 3,
+NumPy and PyTorch; a normal CPU is enough.
+
+```
+cd training
+python3 gen2.py                                   # show sample questions
+python3 train2.py train 60 more.pt --resume tiny2.pt --lr 5e-4 --decay 0.3 --eval-every 20
+python3 train2.py eval more.pt
+python3 train2.py export more.pt TINY.BIN         # TINY.EXE reads the new file
+```
+
+Add your own facts to `training/facts/` (format in `training/TRAINING.TXT`).
+Exporting `tiny2.pt` unchanged gives exactly the released `TINY.BIN`.
+
+## Licence
+
+Code: MIT (`LICENSE`). Three data files derived from public datasets keep
+their own licences (ODbL and CC BY-SA); see `DATA_LICENSES.md`.

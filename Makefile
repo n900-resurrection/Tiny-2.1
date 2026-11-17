@@ -12,16 +12,16 @@ MODEL_DEF = $(if $(MODEL_PATH),-DMODEL_PATH='"$(MODEL_PATH)"')
 
 all: tiny
 
-tiny: TINY.C conio_ncurses.c conio_ncurses.h
-	$(CC) $(CFLAGS) -Wall -DCONIO_NCURSES $(MODEL_DEF) -x c TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -o $@
+tiny: dos/TINY.C conio_ncurses.c conio_ncurses.h
+	$(CC) $(CFLAGS) -Wall -I. -DCONIO_NCURSES $(MODEL_DEF) -x c dos/TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -o $@
 
 plain: tiny-plain
 
-tiny-plain: TINY.C
-	$(CC) $(CFLAGS) -Wall $(MODEL_DEF) -x c TINY.C -lm -o $@
+tiny-plain: dos/TINY.C
+	$(CC) $(CFLAGS) -Wall $(MODEL_DEF) -x c dos/TINY.C -lm -o $@
 
 test: tiny-plain
-	printf 'what is the capital of france\nwhat is 7 plus 5\nquit\n' | ./tiny-plain /P
+	printf 'what is the capital of france\nwhat is 7 plus 5\nquit\n' | TINY_BIN=dos/TINY.BIN ./tiny-plain /P
 
 clean:
 	rm -f tiny tiny-plain
