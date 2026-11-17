@@ -345,7 +345,10 @@ void conio_gettime(struct time *t)
 
 #define AUDIO_RATE 16000
 #define AUDIO_LEAD_MS 60
-#define AUDIO_AMP  4000          /* of 32767 (the stream plays at 100 %, so this is already loud on the phone); TINY_VOLUME=1..100 in the environment scales it */
+/* The volume of TINY itself: ten levels, about 3 dB apart (the amplitude of the square wave, of 32767). The stream plays at 100 % because the sound
+   policy of the N900 would otherwise cut it to about 30 %, and the volume of the phone then has little say, so TINY keeps its own level.
+   TINY_VOLUME=1..10 in the environment sets it for one run; otherwise the level that was last used is in ~/.tiny-volume (default 3). */
+static const short vol_amp[10] = { 300, 420, 600, 850, 1200, 1700, 2400, 3400, 4800, 7000 };
 
 static FILE *audio;                      /* the pipe to paplay */
 static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
@@ -473,12 +476,7 @@ static void audio_play(unsigned ms)
 {
     unsigned n = ms * AUDIO_RATE / 1000, i;
     double step = sound_hz ? (double)sound_hz / AUDIO_RATE : 0.0;
-    static float amp;
-    if (amp == 0.0f) {
-        const char *v = getenv("TINY_VOLUME");
-        int pc = v ? atoi(v) : 100;
-        amp = (float)AUDIO_AMP * (float)(pc < 1 ? 1 : pc > 100 ? 100 : pc) / 100.0f;
-    }
+    float amp = (float)vol_amp[con_volume_get() - 1];
     if (sound_hz) st_tone_ms += ms; else st_quiet_ms += ms;
     st_calls++;
     if (ms < 5) st_low++;
@@ -509,6 +507,48 @@ static void audio_idle(void)
     sound_hz = 0;
     audio_play(30);
     sound_hz = save;
+}
+
+static int vol_level;                    /* 1..10, 0 = not read yet */
+
+static void vol_path(char *buf, size_t n)
+{
+    const char *home = getenv("HOME");
+    snprintf(buf, n, "%s/.tiny-volume", home ? home : ".");
+}
+
+int con_volume_get(void)
+{
+    if (vol_level == 0) {
+        const char *v = getenv("TINY_VOLUME");
+        int n = 3;
+        if (v) n = atoi(v);
+        else {
+            char path[256];
+            FILE *fp;
+            vol_path(path, sizeof path);
+            fp = fopen(path, "r");
+            if (fp) {
+                if (fscanf(fp, "%d", &n) != 1) n = 3;
+                fclose(fp);
+            }
+        }
+        vol_level = n < 1 ? 1 : n > 10 ? 10 : n;
+    }
+    return vol_level;
+}
+
+void con_volume_set(int level)
+{
+    char path[256];
+    FILE *fp;
+    vol_level = level < 1 ? 1 : level > 10 ? 10 : level;
+    vol_path(path, sizeof path);
+    fp = fopen(path, "w");
+    if (fp) {
+        fprintf(fp, "%d\n", vol_level);
+        fclose(fp);
+    }
 }
 
 void con_gain(int percent)
@@ -571,6 +611,8 @@ static void con_poll(void)
     case KEY_F(4): con_push(0, 62); return;
     case KEY_UP: con_push(0, 72); return;
     case KEY_DOWN: con_push(0, 80); return;
+    case KEY_PPAGE: con_push(0, 73); return;   /* PgUp: the volume up   */
+    case KEY_NPAGE: con_push(0, 81); return;   /* PgDn: the volume down */
     case KEY_LEFT: con_push(0, 75); return;
     case KEY_RIGHT: con_push(0, 77); return;
     default:

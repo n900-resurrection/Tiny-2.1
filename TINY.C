@@ -449,6 +449,8 @@ static int plain_main(void)
 #define SCR_COLS() 80
 #define SCR_ROWS() 25
 #define con_gain(pc) ((void)0)           /* the PC speaker has one volume */
+#define con_volume_get() 5
+#define con_volume_set(n) ((void)0)
 #else
 #define SCR_COLS() con_cols()
 #define SCR_ROWS() con_rows()
@@ -1166,6 +1168,7 @@ static void show_help(void)
         "     how do you say thank you in spanish",
         KEY_NAME2 " sound \xFA " KEY_NAME3 " robot voice \xFA " KEY_NAME4 " creativity",
         "\x18 last question \xFA Esc quit \xFA CLS clears",
+        "PgUp / PgDn volume (the toolbar of the terminal)",
         NULL
     };
     int i;
@@ -1333,6 +1336,8 @@ static void ask(const char *q)
 #define K_F3    (256 + 61)
 #define K_F4    (256 + 62)
 #define K_UP    (256 + 72)
+#define K_PGUP  (256 + 73)               /* the volume (on the phone: the PgUp and PgDn buttons of the terminal) */
+#define K_PGDN  (256 + 81)
 
 static int key(void)
 {
@@ -1377,6 +1382,12 @@ static int read_line(char *buf)
         } else if (c == K_F3) {
             voice_on = !voice_on;
             snd_click();
+        } else if (c == K_PGUP || c == K_PGDN) {
+            char msg[16];
+            con_volume_set(con_volume_get() + (c == K_PGUP ? 1 : -1));
+            sprintf(msg, "volume %d/10", con_volume_get());
+            status_bar(msg);
+            tone(1200, 60);                      /* a sample of the new level */
         } else if (c == K_F4) {
             creativity = (creativity + 1) % 10;
             snd_click();

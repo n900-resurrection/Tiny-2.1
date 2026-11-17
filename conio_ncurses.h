@@ -41,6 +41,8 @@ int  conio_getch(void);
 void con_end(void);
 void con_cursor(int on);
 int  con_can_palette(void);
+int  con_volume_get(void);    /* the volume of TINY, 1..10 */
+void con_volume_set(int level);
 void con_gain(int percent);   /* the share of the volume (0..100) of the following sounds */
 int  con_cols(void);      /* the size of the terminal */
 int  con_rows(void);
