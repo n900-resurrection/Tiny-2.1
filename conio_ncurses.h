@@ -41,6 +41,7 @@ int  conio_getch(void);
 void con_end(void);
 void con_cursor(int on);
 int  con_can_palette(void);
+void con_gain(int percent);   /* the share of the volume (0..100) of the following sounds */
 int  con_cols(void);      /* the size of the terminal */
 int  con_rows(void);
 int  con_set_palette(int n, int r, int g, int b);

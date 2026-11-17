@@ -448,6 +448,7 @@ static int plain_main(void)
 #ifdef __TURBOC__
 #define SCR_COLS() 80
 #define SCR_ROWS() 25
+#define con_gain(pc) ((void)0)           /* the PC speaker has one volume */
 #else
 #define SCR_COLS() con_cols()
 #define SCR_ROWS() con_rows()
@@ -1440,6 +1441,7 @@ static int ui_main(void)
     if (vga && neon) neon_palette();
     on_fail = restore_screen;
     if (dump) sndlog = fopen("SOUND.LOG", "w");
+    con_gain(30);                                /* the boot rain, the logo and the melody are loud next to the voice: they play at 30 % */
     boot();
     if (!demo && !dump) {
         put_at(29 + ox, boot_y + 2 < scr_h ? boot_y + 2 : scr_h, C_DIM, "press any key to begin");
@@ -1447,6 +1449,7 @@ static int ui_main(void)
         if (key() == K_ESC) { restore_screen(); return 0; }
     }
     sweep(300, 1400, 120);
+    con_gain(100);
     frame();
     cursor(1);
     chat_win();

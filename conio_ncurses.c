@@ -353,6 +353,7 @@ static unsigned sound_hz;
 static double lead_end, t_open;          /* when the sound already written will have been played; when the stream was opened (ms, wall clock) */
 static unsigned long st_tone_ms, st_quiet_ms, st_calls, st_low;
 static double sound_phase;
+static float gain = 1.0f;                /* con_gain(): a share of the volume, for the sounds that are louder than the voice */
 
 /* TINY_AUDIO_LOG=/path writes what happens to the sound (for testing; the screen has no room for messages) */
 static void audio_log(const char *fmt, ...)
@@ -486,7 +487,7 @@ static void audio_play(unsigned ms)
         if (step > 0.0) {
             sound_phase += step;
             if (sound_phase >= 1.0) sound_phase -= 1.0;
-            x = sound_phase < 0.5 ? amp : -amp;
+            x = (sound_phase < 0.5 ? amp : -amp) * gain;
         }
         lp += 0.85f * (x - lp);      /* a mild low-pass: 0.45 cut the voice (formants above 1 kHz, hiss, clicks) almost out */
         abuf[an++] = (short)lp;
@@ -508,6 +509,11 @@ static void audio_idle(void)
     sound_hz = 0;
     audio_play(30);
     sound_hz = save;
+}
+
+void con_gain(int percent)
+{
+    gain = (percent < 0 ? 0 : percent > 100 ? 100 : percent) / 100.0f;
 }
 
 void conio_sound(unsigned hz)
