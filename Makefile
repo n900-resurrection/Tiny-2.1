@@ -6,17 +6,19 @@
 CC ?= gcc
 CFLAGS ?= -O2
 NCURSES_LIBS ?= -lncursesw
+# MODEL_PATH: where the program looks for the network (default: TINY.BIN in the current directory), e.g. MODEL_PATH=/opt/tiny/share/tiny/TINY.BIN
+MODEL_DEF = $(if $(MODEL_PATH),-DMODEL_PATH='"$(MODEL_PATH)"')
 # the wide-character curses.h (Debian: ncursesw/curses.h is found by itself; give -I.../include/ncursesw when your system keeps it apart)
 
 all: tiny
 
 tiny: TINY.C conio_ncurses.c conio_ncurses.h
-	$(CC) $(CFLAGS) -Wall -DCONIO_NCURSES -x c TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -o $@
+	$(CC) $(CFLAGS) -Wall -DCONIO_NCURSES $(MODEL_DEF) -x c TINY.C conio_ncurses.c $(NCURSES_LIBS) -lm -o $@
 
 plain: tiny-plain
 
 tiny-plain: TINY.C
-	$(CC) $(CFLAGS) -Wall -x c TINY.C -lm -o $@
+	$(CC) $(CFLAGS) -Wall $(MODEL_DEF) -x c TINY.C -lm -o $@
 
 test: tiny-plain
 	printf 'what is the capital of france\nwhat is 7 plus 5\nquit\n' | ./tiny-plain /P

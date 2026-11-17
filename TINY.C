@@ -62,6 +62,18 @@ static void *get_memory(unsigned n)
     return p;
 }
 
+/* Where the network is: TINY.BIN next to the program (DOS), or the file named by the environment variable TINY_BIN, or the place the program
+   was built for (make MODEL_PATH=/opt/tiny/share/tiny/TINY.BIN). */
+#ifndef MODEL_PATH
+#define MODEL_PATH "TINY.BIN"
+#endif
+
+static const char *model_file(void)
+{
+    const char *e = getenv("TINY_BIN");
+    return e && *e ? e : MODEL_PATH;
+}
+
 static void damaged(void)
 {
     fail("TINY.BIN is too short or damaged.");
@@ -113,7 +125,7 @@ static void load_model(const char *name)
         fail("this compiler has an unusual float size.");
     fp = fopen(name, "rb");
     if (fp == NULL)
-        fail("cannot open TINY.BIN. Keep it in the same directory.");
+        fail("cannot open the network file TINY.BIN. Keep it in the same directory, or set TINY_BIN.");
     if (fread(magic, 1, 4, fp) != 4 || memcmp(magic, "TNY2", 4) != 0)
         fail("TINY.BIN is not a version 2 network file.");
     D = read16(fp); L = read16(fp); H = read16(fp); HID = read16(fp);
@@ -405,7 +417,7 @@ static int plain_main(void)
 
     printf("TINY 2 - a neural network that answers questions.\n");
     printf("Loading TINY.BIN ...\n");
-    load_model("TINY.BIN");
+    load_model(model_file());
     alloc_memory();
     printf("Ready: %d layers, %d wide. Creativity %d (TINY 0 to TINY 9).\n", L, D, creativity);
     printf("Ask about countries, animals, space, the body, nature, science, food,\n");
@@ -1145,7 +1157,7 @@ static void boot(void)
     put_at(22 + ox, boot_load, C_FRAME, "LOADING NEURAL WEIGHTS FROM TINY.BIN");
     boot_y = boot_bar_y + 2;
     on_load = boot_bar;
-    load_model("TINY.BIN");
+    load_model(model_file());
     alloc_memory();
     on_load = NULL;
     snd_boot();
