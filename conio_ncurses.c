@@ -345,7 +345,7 @@ void conio_gettime(struct time *t)
 
 #define AUDIO_RATE 16000
 #define AUDIO_LEAD_MS 60
-#define AUDIO_AMP  8000          /* of 32767 (the stream plays at 100 %, so this is already loud on the phone); TINY_VOLUME=1..100 in the environment scales it */
+#define AUDIO_AMP  4000          /* of 32767 (the stream plays at 100 %, so this is already loud on the phone); TINY_VOLUME=1..100 in the environment scales it */
 
 static FILE *audio;                      /* the pipe to paplay */
 static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
