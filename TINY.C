@@ -701,31 +701,39 @@ static void hiss(unsigned ms)
     nosound();
 }
 
+/* How long the voice takes: 100 is the speed of the DOS version. On the N900 it is a little slower, so the words can be followed. */
+#ifdef __TURBOC__
+#define VOICE_STRETCH 100
+#else
+#define VOICE_STRETCH 118
+#endif
+#define VS(ms) ((unsigned)((ms) * VOICE_STRETCH / 100))
+
 static void say_letter(int c, unsigned shift)
 {
     if (c >= 'A' && c <= 'Z') c += 32;
     switch (c) {
-    case 'a': buzz(730, 1090, 64, shift); break;
-    case 'e': buzz(530, 1840, 56, shift); break;
-    case 'i': case 'y': buzz(300, 2290, 52, shift); break;
-    case 'o': buzz(570, 840, 64, shift); break;
-    case 'u': buzz(320, 870, 56, shift); break;
-    case 's': case 'z': case 'c': case 'x': hiss(46); break;
-    case 'f': case 'h': case 'v': case 'j': hiss(30); break;
+    case 'a': buzz(730, 1090, VS(64), shift); break;
+    case 'e': buzz(530, 1840, VS(56), shift); break;
+    case 'i': case 'y': buzz(300, 2290, VS(52), shift); break;
+    case 'o': buzz(570, 840, VS(64), shift); break;
+    case 'u': buzz(320, 870, VS(56), shift); break;
+    case 's': case 'z': case 'c': case 'x': hiss(VS(46)); break;
+    case 'f': case 'h': case 'v': case 'j': hiss(VS(30)); break;
     case 'p': case 't': case 'k': case 'q':
-        tone(3200, 2); quiet(18); break;
+        tone(3200, 2); quiet(VS(18)); break;
     case 'b': case 'd': case 'g':
-        buzz(180, 260, 12, shift); quiet(10); break;
-    case 'm': case 'n': buzz(210, 300, 40, shift); break;
-    case 'l': case 'r': case 'w': buzz(400, 1100, 36, shift); break;
-    case ' ': quiet(45); break;
-    case ',': case '-': quiet(110); break;
-    case '.': case '!': case '?': case ':': quiet(200); break;
+        buzz(180, 260, VS(12), shift); quiet(VS(10)); break;
+    case 'm': case 'n': buzz(210, 300, VS(40), shift); break;
+    case 'l': case 'r': case 'w': buzz(400, 1100, VS(36), shift); break;
+    case ' ': quiet(VS(45)); break;
+    case ',': case '-': quiet(VS(110)); break;
+    case '.': case '!': case '?': case ':': quiet(VS(200)); break;
     default:
         if (c >= '0' && c <= '9')
-            buzz(420 + (c - '0') * 60, 900 + (c - '0') * 90, 70, shift);
+            buzz(420 + (c - '0') * 60, 900 + (c - '0') * 90, VS(70), shift);
         else
-            quiet(20);
+            quiet(VS(20));
     }
 }
 
