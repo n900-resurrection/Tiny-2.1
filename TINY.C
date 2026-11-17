@@ -443,14 +443,26 @@ static int plain_main(void)
 #include "conio_ncurses.h"
 #endif
 
-#define SCRW   80
-#define CHAT_L 3                /* chat window, inside its frame */
-#define CHAT_T 3
-#define CHAT_R 56
-#define CHAT_B 20
-#define CHATW  (CHAT_R - CHAT_L + 1)
-#define MON_X  61               /* neural monitor panel          */
-#define IN_Y   23
+/* The size of the screen: 80x25 in DOS; on a POSIX system the size of the terminal, so a phone with a 72x18 terminal gets a layout of its own.
+   layout() computes these once the screen exists. */
+#ifdef __TURBOC__
+#define SCR_COLS() 80
+#define SCR_ROWS() 25
+#else
+#define SCR_COLS() con_cols()
+#define SCR_ROWS() con_rows()
+#endif
+#define MIN_COLS 60
+#define MIN_ROWS 14
+#define MON_W    22             /* width of the neural monitor, frame included */
+
+static int scr_w = 80, scr_h = 25;
+static int chat_l = 3, chat_t = 3, chat_r = 56, chat_b = 20, chatw = 54;   /* chat window, inside its frame */
+static int mon_x = 61;                                                      /* neural monitor panel          */
+static int body_b = 21;                                                     /* last row of the two big frames */
+static int in_y = 23, in_frame = 1, in_x = 5, in_w = 54;                    /* the line for the question     */
+static int mon_full = 1;                                                    /* all rows of the monitor, or the compact one */
+static int mr_head, mr_l0, mr_nl, mr_conf, mr_meter, mr_last, mr_heat, mr_speed, mr_speedv, mr_net, mr_netv, mr_mode, mr_modev;
 
 /* colours (the neon palette changes how they look on VGA) */
 #define C_FRAME   11            /* electric cyan    */
@@ -493,6 +505,39 @@ static FILE *sndlog;
 static float act_max[MAXL];
 static int heat[18], heat_n;
 static long speed10;                            /* letters per 10 seconds */
+
+static void layout(void)
+{
+    int rows, l;
+    scr_w = SCR_COLS();
+    scr_h = SCR_ROWS();
+    in_frame = scr_h >= 24;                      /* a framed line for the question only when there is room */
+    body_b = in_frame ? scr_h - 4 : scr_h - 2;
+    in_y = in_frame ? scr_h - 2 : scr_h - 1;
+    in_x = in_frame ? 5 : 4;
+    in_w = in_frame ? scr_w - 26 : scr_w - 6;
+    chat_l = 3;
+    chat_t = 3;
+    chat_r = scr_w - MON_W - 2;
+    chat_b = body_b - 1;
+    chatw = chat_r - chat_l + 1;
+    mon_x = scr_w - MON_W + 3;
+    rows = chat_b - chat_t + 1;
+    mon_full = rows >= 18;
+    l = L < 6 ? L : 6;
+    if (!mon_full && l > 4) l = 4;
+    mr_nl = l;
+    mr_head = 3;
+    mr_l0 = 4;
+    if (mon_full) {
+        mr_conf = 10; mr_meter = 11; mr_last = 12; mr_heat = 13; mr_speed = 14; mr_speedv = 15;
+        mr_net = 16; mr_netv = 17; mr_mode = 19; mr_modev = 20;
+    } else {                                     /* the layers, then the rest without the empty rows */
+        mr_conf = mr_l0 + l; mr_meter = mr_conf + 1; mr_last = mr_meter + 1; mr_heat = mr_last + 1;
+        mr_speed = mr_heat + 1; mr_speedv = mr_speed + 1;
+        mr_net = mr_netv = mr_mode = mr_modev = 0;
+    }
+}
 
 static void color(int a)
 {
@@ -687,7 +732,7 @@ static void say_letter(int c, unsigned shift)
 
 static void full(void)
 {
-    window(1, 1, SCRW, 25);
+    window(1, 1, scr_w, scr_h);
 }
 
 static void hline(int x, int y, int n, int ch)
@@ -739,9 +784,11 @@ static char status_right[16];
 static void status_bar(const char *right)
 {
     char buf[20];
+    int room;
     full();
     color(C_BAR);
-    gotoxy(1, 25);
+    hline(1, scr_h, scr_w - 1, ' ');            /* not the last column: writing it would scroll the screen */
+    gotoxy(1, scr_h);
     cputs(" ");
     color(C_BARKEY); cputs(KEY_NAME1); color(C_BAR); cputs(" Help  ");
     color(C_BARKEY); cputs(KEY_NAME2); color(C_BAR); cputs(" Sound ");
@@ -753,8 +800,12 @@ static void status_bar(const char *right)
     color(C_BARKEY); cputs("Esc"); color(C_BAR); cputs(" Quit ");
     if (right) strncpy(status_right, right, 15);
     status_right[15] = 0;
-    sprintf(buf, "%-15.15s", status_right);
-    cputs(buf);                                 /* ends at column 79 */
+    room = scr_w - 1 - (wherex() - 1);           /* what is left of the bar, up to the column before the last */
+    if (room > 15) room = 15;
+    if (room > 0) {
+        sprintf(buf, "%-*.*s", room, room, status_right);
+        cputs(buf);
+    }
 }
 
 static void title_bar(void)
@@ -763,15 +814,18 @@ static void title_bar(void)
     char buf[12];
     full();
     color(C_TITLE);
-    hline(1, 1, SCRW, ' ');
+    hline(1, 1, scr_w, ' ');
     put_at(2, 1, C_TITLE, "\x11\x10");
     put_at(5, 1, C_TITLE2, "T I N Y");
-    put_at(13, 1, C_TITLE, "\xFA  NEURAL INTERFACE 2.1  \xFA  367,000 WEIGHTS");
+    if (scr_w >= 80)
+        put_at(13, 1, C_TITLE, "\xFA  NEURAL INTERFACE 2.1  \xFA  367,000 WEIGHTS");
+    else
+        put_at(13, 1, C_TITLE, "\xFA  NEURAL INTERFACE 2.1");
     gettime(&t);
     sprintf(buf, "%02d:%02d", t.ti_hour, t.ti_min);
-    put_at(62, 1, 0x1A, "\xFE");
-    put_at(64, 1, C_TITLE, "ONLINE");
-    put_at(73, 1, C_TITLE2, buf);
+    put_at(scr_w - 18, 1, 0x1A, "\xFE");
+    put_at(scr_w - 16, 1, C_TITLE, "ONLINE");
+    put_at(scr_w - 7, 1, C_TITLE2, buf);
 }
 
 /* ---- the neural monitor (right panel) ---- */
@@ -780,21 +834,23 @@ static void monitor_static(void)
 {
     int l;
     char buf[8];
-    put_at(MON_X, 3, C_DIM, "LAYER ACTIVITY");
-    for (l = 0; l < L && l < 6; l++) {
+    put_at(mon_x, mr_head, C_DIM, "LAYER ACTIVITY");
+    for (l = 0; l < mr_nl; l++) {
         sprintf(buf, "L%d", l + 1);
-        put_at(MON_X, 4 + l, C_FRAME, buf);
-        meter(MON_X + 3, 4 + l, 15, 0, C_ANSWER);
+        put_at(mon_x, mr_l0 + l, C_FRAME, buf);
+        meter(mon_x + 3, mr_l0 + l, 15, 0, C_ANSWER);
     }
-    put_at(MON_X, 10, C_DIM, "CONFIDENCE");
-    meter(MON_X, 11, 13, 0, C_ANSWER);
-    put_at(MON_X, 12, C_DIM, "LAST LETTERS");
-    put_at(MON_X, 14, C_DIM, "SPEED");
-    put_at(MON_X, 16, C_DIM, "NETWORK");
-    sprintf(buf, "%d", L);
-    put_at(MON_X, 17, C_TEXT, buf); cputs(" layers \xFA ");
-    sprintf(buf, "%d", D); cputs(buf); cputs(" wide");
-    put_at(MON_X, 19, C_DIM, "MODE");
+    put_at(mon_x, mr_conf, C_DIM, "CONFIDENCE");
+    meter(mon_x, mr_meter, 13, 0, C_ANSWER);
+    put_at(mon_x, mr_last, C_DIM, "LAST LETTERS");
+    put_at(mon_x, mr_speed, C_DIM, "SPEED");
+    if (mr_net) {
+        put_at(mon_x, mr_net, C_DIM, "NETWORK");
+        sprintf(buf, "%d", L);
+        put_at(mon_x, mr_netv, C_TEXT, buf); cputs(" layers \xFA ");
+        sprintf(buf, "%d", D); cputs(buf); cputs(" wide");
+        put_at(mon_x, mr_mode, C_DIM, "MODE");
+    }
 }
 
 static void monitor_live(void)
@@ -802,17 +858,17 @@ static void monitor_live(void)
     int l, v, i;
     char buf[20];
     full();
-    for (l = 0; l < L && l < 6; l++) {
+    for (l = 0; l < mr_nl; l++) {
         if (layer_act[l] > act_max[l]) act_max[l] = layer_act[l];
         v = act_max[l] > 0 ? (int)(1000.0f * layer_act[l] / act_max[l]) : 0;
-        meter(MON_X + 3, 4 + l, 15, v, l % 2 ? C_FRAME : C_ANSWER);
+        meter(mon_x + 3, mr_l0 + l, 15, v, l % 2 ? C_FRAME : C_ANSWER);
         act_max[l] *= 0.995f;
     }
     v = (int)(last_conf * 1000.0f);
-    meter(MON_X, 11, 13, v, v > 800 ? C_ANSWER : v > 500 ? C_QTEXT : C_HOT);
+    meter(mon_x, mr_meter, 13, v, v > 800 ? C_ANSWER : v > 500 ? C_QTEXT : C_HOT);
     sprintf(buf, " %3d%%", v / 10);
-    put_at(MON_X + 13, 11, C_BRIGHT, buf);
-    gotoxy(MON_X, 13);
+    put_at(mon_x + 13, mr_meter, C_BRIGHT, buf);
+    gotoxy(mon_x, mr_heat);
     for (i = 0; i < 18; i++) {
         if (i >= heat_n) { color(C_DIM); putch(250); continue; }
         v = heat[i];
@@ -820,27 +876,34 @@ static void monitor_live(void)
         putch(v > 900 ? 219 : v > 700 ? 178 : v > 450 ? 177 : 176);
     }
     sprintf(buf, "%ld.%ld letters/s  ", speed10 / 10, speed10 % 10);
-    put_at(MON_X, 15, C_TEXT, buf);
-    sprintf(buf, "creativity %d     ", creativity);
-    put_at(MON_X, 20, C_TEXT, buf);
+    put_at(mon_x, mr_speedv, C_TEXT, buf);
+    if (mr_modev) {
+        sprintf(buf, "creativity %d     ", creativity);
+        put_at(mon_x, mr_modev, C_TEXT, buf);
+    }
 }
 
 /* ---- frame ---- */
 
 static void frame(void)
 {
+    int cf = scr_w - MON_W;                      /* the right edge of the chat frame */
+    layout();                                    /* the number of layers is known now */
     full();
     color(C_TEXT);
     clrscr();
     title_bar();
-    box(1, 2, 58, 21, C_FRAME, " CONVERSATION ");
-    box(59, 2, 80, 21, C_FRAME2, " NEURAL MONITOR ");
-    box(1, 22, 80, 24, C_FRAME2, " ASK TINY ");
-    put_at(3, IN_Y, C_YOU, "\x10");
-    put_at(59, 22, C_FRAME2, "\xD1");
-    put_at(59, 24, C_FRAME2, "\xCF");
-    put_at(59, IN_Y, C_FRAME2, "\xB3");
-    put_at(62, IN_Y, C_DIM, "\x18 last  " KEY_NAME1 " help");
+    box(1, 2, cf, body_b, C_FRAME, " CONVERSATION ");
+    box(cf + 1, 2, scr_w, body_b, C_FRAME2, " NEURAL MONITOR ");
+    if (in_frame) {
+        box(1, scr_h - 3, scr_w, scr_h - 1, C_FRAME2, " ASK TINY ");
+        put_at(3, in_y, C_YOU, "\x10");
+        put_at(cf + 1, scr_h - 3, C_FRAME2, "\xD1");
+        put_at(cf + 1, scr_h - 1, C_FRAME2, "\xCF");
+        put_at(cf + 1, in_y, C_FRAME2, "\xB3");
+        put_at(cf + 4, in_y, C_DIM, "\x18 last  " KEY_NAME1 " help");
+    } else
+        put_at(2, in_y, C_YOU, "\x10");
     monitor_static();
     monitor_live();
     status_bar(NULL);
@@ -850,7 +913,7 @@ static void frame(void)
 
 static void chat_win(void)
 {
-    window(CHAT_L, CHAT_T, CHAT_R, CHAT_B);
+    window(chat_l, chat_t, chat_r, chat_b);
     gotoxy(chat_x, chat_y);
 }
 
@@ -870,7 +933,7 @@ static void chat_nl(void)
    while an answer is printed, so its screen position stays known) */
 static void chat_room(int lines)
 {
-    int h = CHAT_B - CHAT_T + 1, y = wherey(), x = wherex();
+    int h = chat_b - chat_t + 1, y = wherey(), x = wherex();
     while (y > h - lines + 1 && y > 1) {
         gotoxy(1, h);
         cputs("\n");                              /* scrolls the window up */
@@ -884,7 +947,7 @@ static void chat_text(int attr, const char *s, int indent)
     int i;
     color(attr);
     for (i = 0; s[i]; i++) {
-        if (wherex() >= CHATW) {
+        if (wherex() >= chatw) {
             chat_nl();
             gotoxy(indent, wherey());
         }
@@ -894,12 +957,12 @@ static void chat_text(int attr, const char *s, int indent)
 
 static void dump_screen(const char *name)          /* for testing */
 {
-    char *cells = (char *)malloc(SCRW * 25 * 2);
+    char *cells = (char *)malloc(scr_w * scr_h * 2);
     FILE *fp;
     if (cells == NULL) return;
-    gettext(1, 1, SCRW, 25, cells);
+    gettext(1, 1, scr_w, scr_h, cells);
     fp = fopen(name, "wb");
-    if (fp) { fwrite(cells, 1, SCRW * 25 * 2, fp); fclose(fp); }
+    if (fp) { fwrite(cells, 1, scr_w * scr_h * 2, fp); fclose(fp); }
     free(cells);
 }
 
@@ -914,7 +977,9 @@ static const char *logo[5] = {
 };
 static int logo_col[5] = { 11, 11, 9, 13, 13 };
 static int boot_y;
-#define LOGO_X 16
+static int ox;                                   /* the boot screen is drawn for 80 columns; ox moves it to the middle of a narrower or wider one */
+static int boot_load, boot_bar_y;
+#define LOGO_X (16 + ox)
 #define LOGO_Y 2
 
 static int wait_or_key(unsigned ms)
@@ -928,27 +993,28 @@ static int wait_or_key(unsigned ms)
 /* falling green letters, like a film computer */
 static void rain(void)
 {
-    int col[SCRW], spd[SCRW], f, x, y;
-    for (x = 0; x < SCRW; x++) { col[x] = -(rand() % 25); spd[x] = 1 + rand() % 2; }
+    int col[256], spd[256], f, x, y;
+    int cols = scr_w < 256 ? scr_w : 256;
+    for (x = 0; x < cols; x++) { col[x] = -(rand() % scr_h); spd[x] = 1 + rand() % 2; }
     for (f = 0; f < 46; f++) {
-        for (x = 0; x < SCRW - 1; x += 2) {
+        for (x = 0; x < cols - 1; x += 2) {
             y = col[x];
-            if (y >= 1 && y <= 25) {
+            if (y >= 1 && y <= scr_h) {
                 gotoxy(x + 1, y);
                 color(f < 40 ? C_ANSWER : C_DIM);
                 putch(33 + rand() % 90);
             }
-            if (y + 1 >= 1 && y + 1 <= 25) {
+            if (y + 1 >= 1 && y + 1 <= scr_h) {
                 gotoxy(x + 1, y + 1);
                 color(C_BRIGHT);
                 putch(33 + rand() % 90);
             }
-            if (y - 7 >= 1 && y - 7 <= 25) {
+            if (y - 7 >= 1 && y - 7 <= scr_h) {
                 gotoxy(x + 1, y - 7);
                 putch(' ');
             }
             col[x] += spd[x];
-            if (col[x] > 32) col[x] = -(rand() % 10);
+            if (col[x] > scr_h + 7) col[x] = -(rand() % 10);
         }
         if (f % 4 == 0) tone(3000 + rand() % 3000, 2);
         if (wait_or_key(28)) break;
@@ -1019,7 +1085,7 @@ static void boot_bar(int done, int total)
     int i, n = (int)(36L * done / total);
     char buf[24];
     full();
-    gotoxy(22, 15);
+    gotoxy(22 + ox, boot_bar_y);
     color(C_FRAME);
     putch(222);
     for (i = 0; i < 36; i++) {
@@ -1034,13 +1100,15 @@ static void boot_bar(int done, int total)
     if (done == 2 || (done > 2 && (done - 2) % 6 == 0)) {
         if (done == 2) sprintf(buf, "letters + places");
         else sprintf(buf, "layer %d of %d", (done - 2) / 6, L);
-        gotoxy(26, boot_y);
-        color(C_YOU); cputs("\x10 ");
-        color(C_TEXT); cputs(buf);
-        cputs(" ");
-        i = wherex();
-        color(C_DIM); hline(i, boot_y, 50 - i, 250);
-        color(C_ANSWER); cputs(" ONLINE");
+        if (boot_y <= scr_h - 2) {               /* a short screen has room for fewer lines */
+            gotoxy(26 + ox, boot_y);
+            color(C_YOU); cputs("\x10 ");
+            color(C_TEXT); cputs(buf);
+            cputs(" ");
+            i = wherex();
+            color(C_DIM); hline(i, boot_y, 50 + ox - i, 250);
+            color(C_ANSWER); cputs(" ONLINE");
+        }
         boot_y++;
         tone(880 + 110 * (boot_y % 6), 12);
     }
@@ -1048,25 +1116,30 @@ static void boot_bar(int done, int total)
 
 static void boot(void)
 {
-    int x;
+    int x, rule = scr_w < 62 ? scr_w - 2 : 60;
+    ox = (scr_w - 80) / 2;
+    boot_load = scr_h >= 20 ? 13 : 11;           /* a short screen drops the rule and some empty rows */
+    boot_bar_y = boot_load + 2;
     color(C_TEXT);
     clrscr();
     cursor(0);
     rain();
     logo_in();
-    put_at(24, 8, C_BRIGHT, "N E U R A L    I N T E R F A C E");
-    put_at(29, 9, C_DIM, "version 2.1  \xFA  Turbo C 2.0");
-    color(C_FRAME2);
-    hline(10, 11, 60, 196);
-    put_at(22, 13, C_FRAME, "LOADING NEURAL WEIGHTS FROM TINY.BIN");
-    boot_y = 17;
+    put_at(24 + ox, 8, C_BRIGHT, "N E U R A L    I N T E R F A C E");
+    put_at(29 + ox, 9, C_DIM, "version 2.1");
+    if (scr_h >= 20) {
+        color(C_FRAME2);
+        hline((scr_w - rule) / 2 + 1, 11, rule, 196);
+    }
+    put_at(22 + ox, boot_load, C_FRAME, "LOADING NEURAL WEIGHTS FROM TINY.BIN");
+    boot_y = boot_bar_y + 2;
     on_load = boot_bar;
     load_model("TINY.BIN");
     alloc_memory();
     on_load = NULL;
     snd_boot();
     for (x = 0; x < 6; x++) {
-        put_at(30, boot_y + 1, x % 2 ? C_BRIGHT : C_ANSWER, "\x10 SYSTEM  READY \x11");
+        put_at(30 + ox, boot_y + 1 < scr_h ? boot_y + 1 : scr_h - 1, x % 2 ? C_BRIGHT : C_ANSWER, "\x10 SYSTEM  READY \x11");
         if (!dump) delay(120);
     }
     if (dump) dump_screen("BOOT.DMP");
@@ -1089,7 +1162,7 @@ static void show_help(void)
     int i;
     chat_win();
     if (wherex() > 1) chat_nl();
-    chat_room(9);
+    chat_room(chat_b - chat_t + 1 < 9 ? chat_b - chat_t + 1 : 9);
     color(C_PANEL); cputs(" HELP "); chat_nl();
     for (i = 0; h[i]; i++) {
         color(C_TEXT); cputs(" "); cputs(h[i]); chat_nl();
@@ -1105,9 +1178,9 @@ static int spin, scr_prev;
 /* where letter i of the answer is on the screen */
 static void ans_pos(int i, int *sx, int *sy)
 {
-    int per = CHATW - ans_x0;                    /* letters per line */
-    *sx = CHAT_L + ans_x0 - 1 + i % per;
-    *sy = CHAT_T + ans_y0 - 1 + i / per;
+    int per = chatw - ans_x0;                    /* letters per line */
+    *sx = chat_l + ans_x0 - 1 + i % per;
+    *sy = chat_t + ans_y0 - 1 + i / per;
 }
 
 /* a scanner sweeps back and forth while TINY reads the question */
@@ -1234,7 +1307,7 @@ static void ask(const char *q)
     } else
         snd_ready();
     chat_x = 1;
-    chat_y = sy - CHAT_T + 2;
+    chat_y = sy - chat_t + 2;
     chat_win();
     chat_save();
     title_bar();
@@ -1261,14 +1334,15 @@ static int key(void)
 
 static void draw_input(const char *buf, int n)
 {
-    int w = 54;                                  /* visible part of the line */
+    int w = in_w;                                /* visible part of the line */
+    int shown = n > w ? w : n;
     full();
-    gotoxy(5, IN_Y);
+    gotoxy(in_x, in_y);
     color(C_BRIGHT);
     cputs(n > w ? buf + n - w : buf);
     color(C_TEXT);
-    hline(5 + (n > w ? w : n), IN_Y, 55 - (n > w ? w : n), ' ');
-    gotoxy(5 + (n > w ? w : n), IN_Y);
+    hline(in_x + shown, in_y, w + 1 - shown, ' ');
+    gotoxy(in_x + shown, in_y);
 }
 
 /* read a line; returns -1 for Esc */
@@ -1351,6 +1425,13 @@ static int ui_main(void)
     struct text_info ti;
     int i, n;
 
+    layout();
+    if (scr_w < MIN_COLS || scr_h < MIN_ROWS) {
+        restore_screen();
+        printf("TINY: the terminal is %dx%d; the full-screen mode needs at least %dx%d.\n"
+               "      Make the font smaller, or use the plain mode:  tiny /P\n", scr_w, scr_h, MIN_COLS, MIN_ROWS);
+        return 1;
+    }
     gettextinfo(&ti);
     if (ti.currmode == MONO || ti.currmode == BW80 || ti.currmode == BW40) mono = 1;
     if (ti.currmode != MONO && ti.currmode != C80 && ti.currmode != BW80)
@@ -1361,7 +1442,7 @@ static int ui_main(void)
     if (dump) sndlog = fopen("SOUND.LOG", "w");
     boot();
     if (!demo && !dump) {
-        put_at(29, boot_y + 3, C_DIM, "press any key to begin");
+        put_at(29 + ox, boot_y + 2 < scr_h ? boot_y + 2 : scr_h, C_DIM, "press any key to begin");
         while (!kbhit()) ;
         if (key() == K_ESC) { restore_screen(); return 0; }
     }

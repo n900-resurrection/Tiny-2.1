@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>           /* isatty */
 
 #define MONO 7
 #define BW40 0
@@ -40,6 +41,8 @@ int  conio_getch(void);
 void con_end(void);
 void con_cursor(int on);
 int  con_can_palette(void);
+int  con_cols(void);      /* the size of the terminal */
+int  con_rows(void);
 int  con_set_palette(int n, int r, int g, int b);
 
 #ifndef CONIO_IMPL      /* not in conio_ncurses.c: curses.h has macros of its own there */

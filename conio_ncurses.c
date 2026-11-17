@@ -8,11 +8,20 @@
    Keys: DOS function keys come out as 0 followed by the scan code, as getch() does in DOS. A phone keyboard has no F1..F4,
    so Ctrl-A, Ctrl-S, Ctrl-V and Ctrl-T give the same codes (help, sound, voice, creativity). */
 
-
-#ifndef _XOPEN_SOURCE_EXTENDED
+#define _GNU_SOURCE 1
 #define _XOPEN_SOURCE_EXTENDED 1
+
+
+#if defined(__has_include)
+#if __has_include(<ncursesw/curses.h>)
+#include <ncursesw/curses.h>   /* the wide-character declarations (Debian, the Maemo SDK) */
+#else
+#include <curses.h>
 #endif
-#include <curses.h>   /* only here: its macros (box, hline, getch ...) would clash with the names in TINY.C */
+#else
+#include <curses.h>
+#endif
+/* curses.h is included only in this file: its macros (box, hline, getch ...) would clash with the names in TINY.C */
 #include <locale.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -24,16 +33,18 @@
 #define CONIO_IMPL 1
 #include "conio_ncurses.h"
 
-#define SCR_W 80
-#define SCR_H 25
+/* the screen is as big as the terminal (at most SCR_MAXW x SCR_MAXH cells) */
+#define SCR_MAXW 200
+#define SCR_MAXH 80
 
 typedef struct { unsigned char ch, attr; } ConCell;
 
-static ConCell con_scr[SCR_H][SCR_W];           /* what the program has drawn            */
-static unsigned char con_shown_ch[SCR_H][SCR_W];  /* what is on the real screen            */
-static unsigned char con_shown_at[SCR_H][SCR_W];
-static int con_started, con_dirty, con_color, con_pairs;
-static int con_wl = 1, con_wt = 1, con_wr = SCR_W, con_wb = SCR_H;   /* the text window (1-based)  */
+static int SCR_W = 80, SCR_H = 25;
+static ConCell con_scr[SCR_MAXH][SCR_MAXW];           /* what the program has drawn            */
+static unsigned char con_shown_ch[SCR_MAXH][SCR_MAXW];  /* what is on the real screen            */
+static unsigned char con_shown_at[SCR_MAXH][SCR_MAXW];
+static int con_started, con_dirty, con_color;
+static int con_wl = 1, con_wt = 1, con_wr = 80, con_wb = 25;   /* the text window (1-based)  */
 static int con_x = 1, con_y = 1;                                      /* cursor inside the window   */
 static unsigned char con_attr = 7;
 static int con_cursor_on = 1;
@@ -106,12 +117,9 @@ static void con_start(void)
         return;
     setlocale(LC_ALL, "");
     initscr();
-    if (LINES < SCR_H || COLS < SCR_W) {
-        endwin();
-        fprintf(stderr, "TINY: the terminal is %dx%d, the full-screen mode needs %dx%d.\n"
-                        "      Make the font smaller or use the plain mode:  tiny /P\n", COLS, LINES, SCR_W, SCR_H);
-        exit(1);
-    }
+    SCR_W = COLS < SCR_MAXW ? COLS : SCR_MAXW;
+    SCR_H = LINES < SCR_MAXH ? LINES : SCR_MAXH;
+    con_wl = 1; con_wt = 1; con_wr = SCR_W; con_wb = SCR_H;
     cbreak();
     noecho();
     nonl();
@@ -213,6 +221,9 @@ static void con_scroll(void)
     }
     con_dirty = 1;
 }
+
+int con_cols(void) { con_start(); return SCR_W; }
+int con_rows(void) { con_start(); return SCR_H; }
 
 void conio_window(int l, int t, int r, int b)
 {

@@ -6,6 +6,7 @@
 CC ?= gcc
 CFLAGS ?= -O2
 NCURSES_LIBS ?= -lncursesw
+# the wide-character curses.h (Debian: ncursesw/curses.h is found by itself; give -I.../include/ncursesw when your system keeps it apart)
 
 all: tiny
 
