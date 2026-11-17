@@ -338,6 +338,7 @@ void conio_gettime(struct time *t)
    when it cannot be opened, or TINY_SILENT is set in the environment, delay() just waits. */
 
 #include <dlfcn.h>
+#include <sys/time.h>
 
 #define AUDIO_RATE 16000
 #define AUDIO_AMP  5000          /* of 32767: the speaker of a phone is loud enough */
@@ -352,6 +353,8 @@ static void (*pa_free)(void *);
 static void *audio, *audio_lib;
 static int audio_state;                  /* 0 not tried, 1 open, -1 not available */
 static unsigned sound_hz;
+static double lead_end;                  /* when the sound already written will have been played (ms, wall clock) */
+static unsigned long st_tone_ms, st_quiet_ms, st_calls, st_low;
 static double sound_phase;
 
 /* TINY_AUDIO_LOG=/path writes what happens to the sound (for testing; the screen has no room for messages) */
@@ -370,9 +373,16 @@ static void audio_log(const char *fmt, ...)
     fclose(fp);
 }
 
+static void audio_flush(void);
+
 static void audio_close(void)
 {
     int err;
+    static int closing;
+    if (closing) return;
+    closing = 1;
+    audio_flush();
+    audio_log("played: %lu ms of tone, %lu ms of silence, %lu writes (%lu of them shorter than 5 ms)", st_tone_ms, st_quiet_ms, st_calls, st_low);
     if (audio_state == 1 && audio) {
         pa_drain(audio, &err);
         pa_free(audio);
@@ -406,6 +416,7 @@ static void audio_open(void)
     }
     attr.maxlength = (unsigned)-1;
     attr.tlength = AUDIO_RATE * 2 / 12;          /* about 80 ms of sound in the buffer */
+    lead_end = 0;
     attr.prebuf = 0;                             /* start playing at once */
     attr.minreq = (unsigned)-1;
     attr.fragsize = (unsigned)-1;
@@ -419,29 +430,64 @@ static void audio_open(void)
     atexit(audio_close);
 }
 
-/* `ms` milliseconds of the current tone (or silence) to the sound server; blocks for about that long */
+/* The samples wait in a small buffer and go out in pieces of about 30 ms: the voice asks for 2 ms of sound at a time (a vowel is a tone that
+   changes every 2 ms), and a write for each of them left gaps that sounded like clicking teeth. When the sound server has run dry, or has
+   been idle, 50 ms of silence go first, so there is a lead again and the stream does not stop between two pieces. */
+#define AUDIO_CHUNK (AUDIO_RATE * 30 / 1000)
+static short abuf[AUDIO_CHUNK + AUDIO_RATE / 10];
+static unsigned an;
+static float lp;                         /* the low-pass filter that takes the edge off the square wave */
+
+static double now_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
+static void audio_flush(void)
+{
+    int err;
+    double t;
+    short silence[AUDIO_RATE * 50 / 1000];
+    if (audio_state != 1 || an == 0)
+        return;
+    t = now_ms();
+    if (t > lead_end) {                          /* run dry, or idle: rebuild the lead */
+        memset(silence, 0, sizeof silence);
+        if (pa_write(audio, silence, sizeof silence, &err) < 0) { audio_log("pa_simple_write failed, error %d", err); audio_close(); return; }
+        lead_end = t + 50.0;
+    }
+    if (pa_write(audio, abuf, an * sizeof abuf[0], &err) < 0) {
+        audio_log("pa_simple_write failed, error %d", err);
+        audio_close();
+        return;
+    }
+    lead_end += an * 1000.0 / AUDIO_RATE;
+    an = 0;
+}
+
+/* `ms` milliseconds of the current tone (or silence) into the buffer; the buffer goes out when it is full, and that waits for the sound card */
 static void audio_play(unsigned ms)
 {
-    short buf[AUDIO_RATE / 10];
-    unsigned n = ms * AUDIO_RATE / 1000, i, k;
-    int err;
+    unsigned n = ms * AUDIO_RATE / 1000, i;
     double step = sound_hz ? (double)sound_hz / AUDIO_RATE : 0.0;
-    while (n > 0) {
-        k = n > sizeof buf / sizeof buf[0] ? (unsigned)(sizeof buf / sizeof buf[0]) : n;
-        for (i = 0; i < k; i++) {
-            if (step > 0.0) {
-                sound_phase += step;
-                if (sound_phase >= 1.0) sound_phase -= 1.0;
-                buf[i] = sound_phase < 0.5 ? AUDIO_AMP : -AUDIO_AMP;
-            } else
-                buf[i] = 0;
+    if (sound_hz) st_tone_ms += ms; else st_quiet_ms += ms;
+    st_calls++;
+    if (ms < 5) st_low++;
+    for (i = 0; i < n; i++) {
+        float x = 0.0f;
+        if (step > 0.0) {
+            sound_phase += step;
+            if (sound_phase >= 1.0) sound_phase -= 1.0;
+            x = sound_phase < 0.5 ? (float)AUDIO_AMP : -(float)AUDIO_AMP;
         }
-        if (pa_write(audio, buf, k * sizeof buf[0], &err) < 0) {
-            audio_log("pa_simple_write failed, error %d", err);
-            audio_close();
+        lp += 0.45f * (x - lp);
+        abuf[an++] = (short)lp;
+        if (an >= AUDIO_CHUNK)
+            audio_flush();
+        if (audio_state != 1)
             return;
-        }
-        n -= k;
     }
 }
 
@@ -483,6 +529,7 @@ static void con_push(int a, int b)
 static void con_poll(void)
 {
     int c = wgetch(stdscr);
+    if (c != ERR) audio_log("key %d", c);
     if (con_qn > 2) return;
     switch (c) {
     case ERR: return;
@@ -520,6 +567,7 @@ int conio_getch(void)
 {
     int c, i;
     con_start();
+    audio_flush();
     while (con_qn == 0) {
         con_flush();
         con_poll();
