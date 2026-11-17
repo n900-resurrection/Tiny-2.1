@@ -461,6 +461,10 @@ static void audio_flush(void)
         if (pa_write(audio, silence, sizeof silence, &err) < 0) { audio_log("pa_simple_write failed, error %d", err); audio_close(); return; }
         lead_end = t + 50.0;
     }
+    if (getenv("TINY_AUDIO_DUMP")) {               /* for testing: the samples as they go to the sound server (raw s16le, mono, 16 kHz) */
+        FILE *df = fopen(getenv("TINY_AUDIO_DUMP"), "ab");
+        if (df) { fwrite(abuf, sizeof abuf[0], an, df); fclose(df); }
+    }
     if (pa_write(audio, abuf, an * sizeof abuf[0], &err) < 0) {
         audio_log("pa_simple_write failed, error %d", err);
         audio_close();
