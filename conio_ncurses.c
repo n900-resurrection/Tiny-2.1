@@ -409,6 +409,9 @@ static void audio_open(void)
         audio_log("TINY_SILENT is set");
         return;
     }
+    /* libpulse puts the X display into the properties of the stream (window.x11.display), and on the N900 the sound policy then treats it as the stream of a
+       window; a terminal program has none, and its stream went quiet after a few clicks. TINY does not use X, so it does not need DISPLAY. */
+    unsetenv("DISPLAY");
     audio_lib = dlopen("libpulse-simple.so.0", RTLD_NOW);
     if (!audio_lib) {
         audio_log("dlopen: %s", dlerror());
